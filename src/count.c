@@ -24,8 +24,7 @@ struct call_counts {
     struct timespec time_min;
     struct timespec time_max;
     struct timespec time_avg;
-    uint64_t calls, errors;
-    uint64_t sequence;
+    uint64_t calls, errors, fd_count;
 };
  
 static struct call_counts *countv[SUPPORTED_PERSONALITIES];
@@ -49,7 +48,7 @@ enum count_summary_columns {
     CSC_CALLS,
     CSC_ERRORS,
     CSC_SC_NAME,
-    CSC_SEQUENCE,
+    CSC_FD_COUNT, // 추가된 로직: 파일 디스크립터 수 열
     CSC_MAX,
 };
  
@@ -60,7 +59,7 @@ static uint8_t columns[CSC_MAX] = {
     CSC_CALLS,
     CSC_ERRORS,
     CSC_SC_NAME,
-    CSC_SEQUENCE,
+    CSC_FD_COUNT // 추가된 로직: 파일 디스크립터 수 열
 };
  
 static const struct {
@@ -97,11 +96,10 @@ static const struct {
     { "syscall_name", CSC_SC_NAME    },
     { "syscall-name", CSC_SC_NAME    },
     { "none",         CSC_NONE       },
-    { "sequence",     CSC_SEQUENCE   },
     { "nothing",      CSC_NONE       },
+    { "fd_count",     CSC_FD_COUNT   } // 추가된 로직: 파일 디스크립터 수 
 };
  
-static uint64_t syscall_sequence = 0;
 void
 count_syscall(struct tcb *tcp, const struct timespec *syscall_exiting_ts)
 {
@@ -115,7 +113,7 @@ count_syscall(struct tcb *tcp, const struct timespec *syscall_exiting_ts)
             counts[i].time_min = max_ts;
     }
     struct call_counts *cc = &counts[tcp->scno];
-    cc-> sequence = ++syscall_sequence;
+ 
     cc->calls++;
     if (syserror(tcp))
         cc->errors++;
@@ -136,7 +134,10 @@ count_syscall(struct tcb *tcp, const struct timespec *syscall_exiting_ts)
     ts_add(&cc->time, &cc->time, wts_nonneg);
     cc->time_min = *ts_min(&cc->time_min, wts_nonneg);
     cc->time_max = *ts_max(&cc->time_max, wts_nonneg);
+    // 추가된 로직: 파일 디스크립터 수 누적
+    cc->fd_count += tcp->u_arg[0];
 }
+
  
 static int
 time_cmp(const void *a, const void *b)
@@ -311,11 +312,14 @@ call_summary_pers(FILE *outf)
     const struct timespec *tv_avg_max = &zero_ts;
     uint64_t call_cum = 0;
     uint64_t error_cum = 0;
-    static uint64_t syscall_sequence = 0;
+     // 추가된 로직: 파일 디스크립터 수 누적
+    uint64_t fd_count_cum = 0;
     double float_tv_cum;
     double percent;
  
     size_t sc_name_max = 0;
+
+
  
  
     /* sort, calculate statistics */
@@ -331,6 +335,7 @@ call_summary_pers(FILE *outf)
         tv_max = ts_max(tv_max, &counts[i].time_max);
         call_cum += counts[i].calls;
         error_cum += counts[i].errors;
+        fd_count_cum += counts[i].fd_count; // 추가된 로직: 파일 디스크립터 수 누적
  
         ts_div(&counts[i].time_avg, &counts[i].time, counts[i].calls);
         tv_avg_max = ts_max(tv_avg_max, &counts[i].time_avg);
@@ -360,6 +365,7 @@ call_summary_pers(FILE *outf)
         [CSC_TIME_AVG]   = { "usecs/call", 11, "%1$*2$" PRIu64 },
         [CSC_CALLS]      = { "calls",       9, "%1$*2$" PRIu64 },
         [CSC_ERRORS]     = { "errors",      9, "%1$*2$.0" PRIu64 },
+        [CSC_FD_COUNT] = { "fd_count",    9, "%1$*2$" PRIu64 },
         [CSC_SC_NAME]    = { "syscall",    16, "%1$-*2$s", "%1$s", CF_L },
     };
  
@@ -378,6 +384,7 @@ call_summary_pers(FILE *outf)
         W_(CSC_CALLS,      num_chars("%" PRIu64, call_cum)),
         W_(CSC_ERRORS,     num_chars("%" PRIu64, error_cum)),
         W_(CSC_SC_NAME,    sc_name_max + 1),
+         W_(CSC_FD_COUNT, num_chars("%" PRIu64, fd_count_cum)), // 추가된 로직: 파일 디스크립터 수 열
     };
 #undef W_
  
@@ -430,7 +437,7 @@ call_summary_pers(FILE *outf)
         FC_(CSC_CALLS);
         FC_(CSC_ERRORS);
         FC_(CSC_SC_NAME);
-        FC_(CSC_SEQUENCE);
+        FC_(CSC_FD_COUNT); // 추가된 로직
         }
     }
  
@@ -464,7 +471,6 @@ call_summary_pers(FILE *outf)
             PC_(CSC_CALLS,      cc->calls);
             PC_(CSC_ERRORS,     cc->errors);
             PC_(CSC_SC_NAME,    sysent[idx].sys_name);
-            PC_(CSC_SEQUENCE, tcp->sequence);
             }
         }
  
@@ -498,6 +504,7 @@ call_summary_pers(FILE *outf)
         PC_(CSC_CALLS, call_cum);
         PC_(CSC_ERRORS, error_cum);
         PC_(CSC_SC_NAME, "total");
+        PC_(CSC_FD_COUNT, fd_count_cum); // 추가된 로직
         }
     }
     fputc('\n', outf);
