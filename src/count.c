@@ -471,6 +471,7 @@ call_summary_pers(FILE *outf)
             PC_(CSC_CALLS,      cc->calls);
             PC_(CSC_ERRORS,     cc->errors);
             PC_(CSC_SC_NAME,    sysent[idx].sys_name);
+            PC_(CSC_FD_COUNT, cc->fd_count);
             }
         }
  
